@@ -132,19 +132,49 @@ cp "$WORK/rootfs.bytes" "$WORK/cdroot/rootfs.bytes"
 
 # Stage the init environment on the cd9660 root. The kernel mounts cd9660
 # as / and runs /sbin/init from there, which then runs /init.sh which uses
-# tools from /rescue. All three need to exist on the cd9660 itself.
+# tools from /rescue plus the dynamic /sbin/geom (for `geom union create`,
+# which dlopen()s /lib/geom/geom_union.so — the static rescue binary can't
+# do this).
 echo "==> staging init environment on cd9660"
 mkdir -p "$WORK/cdroot/sbin" "$WORK/cdroot/rescue" "$WORK/cdroot/sysroot" \
-         "$WORK/cdroot/dev"  "$WORK/cdroot/etc"
+         "$WORK/cdroot/dev"  "$WORK/cdroot/etc"  "$WORK/cdroot/lib" \
+         "$WORK/cdroot/libexec"
 
-# /rescue is a statically-linked crunchgen binary plus symlinks for every
-# tool name. Statically linked = no library dependencies, so it works
-# even on a bare cd9660 with no /lib.
+# /rescue: statically-linked busybox-equivalent. Provides sh, mdconfig,
+# kldload, mount, kenv, sleep, echo, cat, halt, etc. Self-contained.
 cp -aR "$WORK/rootfs/rescue/." "$WORK/cdroot/rescue/"
 
-# /sbin/init -> /rescue/init (the symlink is the standard fallback in
-# init_path; using /rescue/init avoids needing /lib/* on the cd9660).
+# /sbin/init -> /rescue/init. /rescue/init is statically linked.
 ln -sf /rescue/init "$WORK/cdroot/sbin/init"
+
+# /sbin/geom (dynamic) + the libs it dlopens. /rescue/geom is statically
+# linked and can't load class libraries (no dlopen in static binaries),
+# so it returns "Unknown command: create" for union. Use the real
+# dynamic /sbin/geom + /lib/geom/geom_union.so.
+cp "$WORK/rootfs/sbin/geom" "$WORK/cdroot/sbin/geom"
+cp -aR "$WORK/rootfs/lib/geom" "$WORK/cdroot/lib/geom"
+
+# Dynamic linker + libraries that /sbin/geom and /lib/geom/geom_union.so need.
+# Use ldd to discover the actual transitive dependency set on this build's
+# rootfs rather than guessing — keeps us correct across FreeBSD versions.
+LD_LIBRARY_PATH="$WORK/rootfs/lib:$WORK/rootfs/usr/lib" \
+ldd "$WORK/rootfs/sbin/geom" "$WORK/rootfs/lib/geom/geom_union.so" 2>/dev/null \
+    | awk '/=>/ {print $3}' | sort -u | while read lib; do
+        case "$lib" in
+            "$WORK/rootfs"/*) src="$lib" ;;
+            /*)              src="$WORK/rootfs$lib" ;;
+            *) continue ;;
+        esac
+        rel="${src#"$WORK/rootfs"}"
+        if [ -f "$src" ]; then
+            install -d "$WORK/cdroot$(dirname "$rel")"
+            cp "$src" "$WORK/cdroot$rel"
+        fi
+    done
+# Dynamic linker itself (not always reported by ldd)
+cp "$WORK/rootfs/libexec/ld-elf.so.1" "$WORK/cdroot/libexec/ld-elf.so.1"
+echo "==> /sbin/geom deps copied:"
+ls -la "$WORK/cdroot/lib/" "$WORK/cdroot/lib/geom/" "$WORK/cdroot/libexec/"
 
 # pivot script
 cp "$ROOT/ramdisk/init.sh" "$WORK/cdroot/init.sh"
