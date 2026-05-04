@@ -61,7 +61,7 @@ set iso [lindex $argv 0]
 set accel_flags [split $env(ACCEL_FLAGS) " "]
 
 eval spawn qemu-system-x86_64 \
-    -m 8G \
+    -m 4G \
     -machine q35 \
     -bios $env(OVMF) \
     $accel_flags \
@@ -78,7 +78,7 @@ expect {
     "FreeBSD"   { puts "\nstage 1 OK: FreeBSD banner observed" }
 }
 
-# Stage 2: pivot script ran
+# Stage 2: init.sh started running
 expect {
     timeout {
         puts "\nFAIL: livecd init.sh did not start within 6 minutes"
@@ -87,22 +87,22 @@ expect {
     "livecd init.sh: starting" { puts "stage 2 OK: init.sh started" }
 }
 
-# Stage 3: gunion overlay created and reroot issued
+# Stage 3: gunion overlay built and init.sh signaled chroot
 expect {
     timeout {
-        puts "\nFAIL: reboot -r not reached within 6 minutes"
+        puts "\nFAIL: init_chroot pivot signal not reached within 6 minutes"
         exit 1
     }
-    "reboot -r" { puts "stage 3 OK: reboot -r issued" }
+    "exiting; init will chroot" { puts "stage 3 OK: init_chroot pivot signaled" }
 }
 
-# Stage 4: post-pivot multi-user boot reached rc.local
+# Stage 4: multi-user boot reached rc.local in the chroot
 expect {
     timeout {
-        puts "\nFAIL: SMOKE_TEST_DONE not seen within 6 minutes -- pivot likely failed"
+        puts "\nFAIL: SMOKE_TEST_DONE not seen within 6 minutes -- chroot/rc.local likely failed"
         exit 1
     }
-    "SMOKE_TEST_DONE" { puts "stage 4 OK: rc.local executed on new root" }
+    "SMOKE_TEST_DONE" { puts "stage 4 OK: rc.local executed inside chroot" }
 }
 
 # Stage 5: write to root succeeded

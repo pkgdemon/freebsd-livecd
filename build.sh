@@ -1,5 +1,7 @@
 #!/bin/sh
-# build.sh — assemble a FreeBSD live ISO with mkuzip rootfs + gunion overlay.
+# build.sh — assemble a FreeBSD live ISO using the init_chroot architecture:
+#   cd9660 = kernel root; vnode-mounted rootfs.uzip with gunion overlay;
+#   pivot via init_chroot kenv (no preload, no mfsroot, no reboot -r).
 # Runs on FreeBSD (host or vmactions VM). Produces out/livecd.iso.
 
 set -eu
@@ -65,10 +67,7 @@ else
 fi
 
 #
-# 4. slim the rootfs. None of these are needed for a live-boot smoke test
-#    and they collectively account for ~600 MB before compression. The
-#    UEFI loader's staging area can't hold the whole base + kernel +
-#    mfsroot at once otherwise.
+# 4. trim rootfs of things not needed at runtime
 #
 echo "==> slimming rootfs"
 rm -rf \
@@ -86,11 +85,10 @@ rm -rf \
     "$WORK/rootfs/usr/lib/debug" \
     "$WORK/rootfs/usr/libdata/lint" \
     "$WORK/rootfs/var/db/etcupdate"
-# Strip kernel module debug symbols (large)
 find "$WORK/rootfs/boot/kernel" -name '*.symbols' -delete 2>/dev/null || true
 
 #
-# 5. apply local overlays (etc/rc.conf, etc/rc.local, etc/motd.template, ...)
+# 5. apply local overlays (etc/rc.conf, etc/rc.local, ...)
 #
 if [ -d "$ROOT/overlays" ]; then
     echo "==> applying overlays"
@@ -101,29 +99,25 @@ fi
 [ -f "$WORK/rootfs/etc/rc.local" ] && chmod +x "$WORK/rootfs/etc/rc.local"
 
 #
-# 5. write a minimal /etc/fstab — root is mounted by reboot -r, no entries needed
+# 6. minimal /etc/fstab; root mounted by gunion at boot, no entries needed
 #
 cat > "$WORK/rootfs/etc/fstab" <<'EOF'
-# Live system: root is the gunion(8) overlay device, mounted by reboot -r
-# from /boot/loader.conf's vfs.root.mountfrom kenv. No fstab entries required.
+# Live system: root is the gunion overlay device (mounted at /sysroot in
+# the ramdisk-style init phase, then exposed as / via init_chroot).
 EOF
 
 #
-# 6. record uncompressed rootfs size; the init script reads this to size the
-#    swap-md upper exactly to match the lower
+# 7. record uncompressed size, makefs UFS, mkuzip
 #
 ROOTFS_BYTES=$(du -sk "$WORK/rootfs" | awk '{print $1*1024}')
 echo "$ROOTFS_BYTES" > "$WORK/rootfs.bytes"
 echo "==> rootfs uncompressed = $ROOTFS_BYTES bytes ($((ROOTFS_BYTES / 1024 / 1024)) MiB)"
 
-#
-# 7. makefs UFS image of the rootfs, then mkuzip it
-#
 echo "==> makefs ffs"
 makefs -t ffs -o version=2,label=ROOTFS \
     "$WORK/rootfs.ufs" "$WORK/rootfs"
 
-mkdir -p "$WORK/cdroot/boot"
+mkdir -p "$WORK/cdroot"
 case "$COMPRESS" in
     zstd) MKUZIP_FLAGS="-A zstd -C 19 -d -s 262144" ;;
     zlib) MKUZIP_FLAGS="-d -s 65536" ;;
@@ -131,57 +125,36 @@ case "$COMPRESS" in
 esac
 echo "==> mkuzip $MKUZIP_FLAGS"
 mkuzip $MKUZIP_FLAGS -j "$(sysctl -n hw.ncpu)" \
-    -o "$WORK/cdroot/boot/rootfs.uzip" "$WORK/rootfs.ufs"
-ls -lh "$WORK/cdroot/boot/rootfs.uzip"
+    -o "$WORK/cdroot/rootfs.uzip" "$WORK/rootfs.ufs"
+
+# size sidecar that init.sh reads to size the swap-md upper
+cp "$WORK/rootfs.bytes" "$WORK/cdroot/rootfs.bytes"
+
+# pivot script — lives at cd9660 root since init runs /init.sh
+cp "$ROOT/ramdisk/init.sh" "$WORK/cdroot/init.sh"
+chmod +x "$WORK/cdroot/init.sh"
+
+# pre-create /sysroot as an empty mountpoint on the cd9660; init.sh can't
+# mkdir it at boot because cd9660 is read-only at runtime
+mkdir -p "$WORK/cdroot/sysroot"
+
+ls -lh "$WORK/cdroot/rootfs.uzip"
 
 #
-# 8. build the mfs_root: tiny UFS containing /rescue + /init.sh + size sidecar
-#
-echo "==> building mfsroot"
-mkdir -p "$WORK/ramdisk/rescue" "$WORK/ramdisk/dev" \
-         "$WORK/ramdisk/etc"    "$WORK/ramdisk/sbin" \
-         "$WORK/ramdisk/sysroot"
-cp -aR "$WORK/rootfs/rescue/." "$WORK/ramdisk/rescue/"
-
-# /sbin/init -> /rescue/init (real FreeBSD init binary; reads init_script kenv)
-ln -sf /rescue/init "$WORK/ramdisk/sbin/init"
-
-# our pivot script + size sidecar that init.sh reads
-cp "$ROOT/ramdisk/init.sh" "$WORK/ramdisk/init.sh"
-chmod +x "$WORK/ramdisk/init.sh"
-echo "$ROOTFS_BYTES" > "$WORK/ramdisk/etc/rootfs.bytes"
-
-makefs -t ffs -o version=2,label=MFSROOT \
-    "$WORK/mfsroot.ufs" "$WORK/ramdisk"
-# Leave uncompressed — the loader's gzip auto-decompression depends on a
-# .gz suffix on the loaded filename, and the kernel's md_preloaded() reads
-# raw bytes regardless. Raw is simpler and only ~30 MB extra on the ISO.
-cp "$WORK/mfsroot.ufs" "$WORK/cdroot/boot/mfsroot"
-ls -lh "$WORK/cdroot/boot/mfsroot"
-
-#
-# 9. stage kernel + modules + loader binaries on the cd9660 carrier.
-#    Copy the entire /boot tree from the rootfs — the Lua-based loader
-#    needs /boot/lua/, /boot/defaults/, /boot/device.hints, fonts, etc.
-#    Then drop our loader.conf on top.
+# 8. stage /boot from the rootfs onto the cd9660, then drop our loader.conf
 #
 echo "==> staging /boot"
-cp -aR "$WORK/rootfs/boot/." "$WORK/cdroot/boot/"
-# Our loader.conf overrides /boot/defaults/loader.conf knobs as needed
+cp -aR "$WORK/rootfs/boot" "$WORK/cdroot/"
 cp "$ROOT/boot/loader.conf" "$WORK/cdroot/boot/loader.conf"
 
 #
-# 10. EFI System Partition image (BOOTX64.EFI inside) AND a copy on the
-#     cd9660 root, so OVMF can find the bootloader either through the
-#     El Torito EFI entry or by reading the cd9660 directly.
-#     UEFI spec wants FAT16+ for ESP; use fat_type=16 with a 32 MiB image.
+# 9. EFI System Partition (FAT16, /EFI/BOOT/BOOTX64.EFI inside) and a copy
+#    of the EFI loader at the cd9660 root for OVMF's ISO9660 discovery.
 #
-echo "==> building EFI System Partition + cd9660 EFI overlay"
+echo "==> building EFI System Partition"
 ESP="$WORK/efi.img"
 ESPROOT="$WORK/efi-staging"
 mkdir -p "$ESPROOT/EFI/BOOT"
-
-# Pick a loader.efi: prefer loader_lua.efi (modern), fall back to loader.efi.
 if [ -f "$WORK/rootfs/boot/loader_lua.efi" ]; then
     EFI_LOADER="$WORK/rootfs/boot/loader_lua.efi"
 elif [ -f "$WORK/rootfs/boot/loader.efi" ]; then
@@ -191,20 +164,14 @@ else
     exit 1
 fi
 echo "==> EFI loader: $EFI_LOADER"
-
 cp "$EFI_LOADER" "$ESPROOT/EFI/BOOT/BOOTX64.EFI"
-
-# Build the El Torito ESP image (FAT16, 32 MiB)
 makefs -t msdos -s 32m -o fat_type=16,sectors_per_cluster=1 \
     "$ESP" "$ESPROOT"
-
-# Also stage /EFI/BOOT/BOOTX64.EFI directly on the cd9660 — UEFI firmwares
-# that read ISO9660 (incl. OVMF) will find it via the default boot path.
 mkdir -p "$WORK/cdroot/EFI/BOOT"
 cp "$EFI_LOADER" "$WORK/cdroot/EFI/BOOT/BOOTX64.EFI"
 
 #
-# 11. final cd9660 image: hybrid BIOS + UEFI El Torito
+# 10. final cd9660 (hybrid BIOS + UEFI El Torito)
 #
 echo "==> building ISO"
 BOOTABLE_ARGS=""
