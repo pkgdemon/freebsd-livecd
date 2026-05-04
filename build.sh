@@ -128,8 +128,10 @@ echo "$ROOTFS_BYTES" > "$WORK/ramdisk/etc/rootfs.bytes"
 
 makefs -t ffs -o version=2,label=MFSROOT \
     "$WORK/mfsroot.ufs" "$WORK/ramdisk"
-gzip -9 -f "$WORK/mfsroot.ufs"
-mv "$WORK/mfsroot.ufs.gz" "$WORK/cdroot/boot/mfsroot"
+# Leave uncompressed — the loader's gzip auto-decompression depends on a
+# .gz suffix on the loaded filename, and the kernel's md_preloaded() reads
+# raw bytes regardless. Raw is simpler and only ~30 MB extra on the ISO.
+cp "$WORK/mfsroot.ufs" "$WORK/cdroot/boot/mfsroot"
 ls -lh "$WORK/cdroot/boot/mfsroot"
 
 #
