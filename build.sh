@@ -142,7 +142,14 @@ mkdir -p "$WORK/cdroot/sbin" "$WORK/cdroot/rescue" "$WORK/cdroot/sysroot" \
 
 # /rescue: statically-linked busybox-equivalent. Provides sh, mdconfig,
 # kldload, mount, kenv, sleep, echo, cat, halt, etc. Self-contained.
-cp -aR "$WORK/rootfs/rescue/." "$WORK/cdroot/rescue/"
+#
+# CRITICAL: /rescue uses hardlinks aggressively -- every tool name is a
+# hardlink to the same crunchgen binary, so the real disk footprint is
+# ~14 MB even though there are ~200 entries. FreeBSD's `cp -a` does NOT
+# preserve hardlinks (unlike GNU cp), so a naive cp turns every hardlink
+# into a full file copy -> 2.8 GB explosion. Use a tar pipe which does
+# preserve hardlinks.
+( cd "$WORK/rootfs" && tar cf - rescue ) | ( cd "$WORK/cdroot" && tar xf - )
 
 # /sbin/init -> /rescue/init. /rescue/init is statically linked.
 ln -sf /rescue/init "$WORK/cdroot/sbin/init"
@@ -152,7 +159,8 @@ ln -sf /rescue/init "$WORK/cdroot/sbin/init"
 # so it returns "Unknown command: create" for union. Use the real
 # dynamic /sbin/geom + /lib/geom/geom_union.so.
 cp "$WORK/rootfs/sbin/geom" "$WORK/cdroot/sbin/geom"
-cp -aR "$WORK/rootfs/lib/geom" "$WORK/cdroot/lib/geom"
+# tar-pipe again in case /lib/geom uses hardlinks
+( cd "$WORK/rootfs" && tar cf - lib/geom ) | ( cd "$WORK/cdroot" && tar xf - )
 
 # Dynamic linker + libraries that /sbin/geom and /lib/geom/geom_union.so need.
 # Use ldd to discover the actual transitive dependency set on this build's
@@ -203,9 +211,11 @@ for f in cdboot loader loader.efi loader_lua loader_lua.efi \
     fi
 done
 
-# Kernel binary, gzipped so the loader unpacks it on read.
-gzip -9c "$WORK/rootfs/boot/kernel/kernel" > "$WORK/cdroot/boot/kernel/kernel"
-ls -lh "$WORK/cdroot/boot/kernel/kernel" \
+# Kernel binary, gzipped so the loader unpacks it on read. Save as
+# kernel.gz (with .gz extension) -- the loader's gzipfs layer detects
+# the extension and decompresses transparently. Same pattern mfsBSD uses.
+gzip -9c "$WORK/rootfs/boot/kernel/kernel" > "$WORK/cdroot/boot/kernel/kernel.gz"
+ls -lh "$WORK/cdroot/boot/kernel/kernel.gz" \
        "$WORK/rootfs/boot/kernel/kernel"
 
 # Modules: only what we need at boot.
