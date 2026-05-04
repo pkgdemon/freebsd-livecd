@@ -118,12 +118,11 @@ expect {
     "SMOKE_TEST_DONE" { puts "stage 5 OK: rc.local executed inside chroot" }
 }
 
-# Cleanly shut down via qemu monitor
-send "\x01"
-send "c"
-expect "(qemu)"
-send "quit\r"
-expect eof
+# All stages passed -- close the spawn to terminate qemu
+# (we use -serial stdio without the monitor multiplex, so Ctrl-A escapes
+# don't work; just SIGHUP qemu by closing its stdio).
+close
+wait
 exit 0
 EOF
 
