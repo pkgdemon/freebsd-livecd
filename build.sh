@@ -183,11 +183,52 @@ chmod +x "$WORK/cdroot/init.sh"
 ls -lh "$WORK/cdroot/rootfs.uzip"
 
 #
-# 8. stage /boot from the rootfs onto the cd9660, then drop our loader.conf
+# 8. stage /boot on the cd9660 carrier — but ONLY the loader-needed bits.
+#    Linux livecds ship just the kernel + initramfs on iso9660 (~60 MB
+#    total) and put all kernel modules inside the squashfs. We do the
+#    same: copy the kernel binary (gzipped) plus the few modules the
+#    loader will preload + a handful of likely-auto-loaded ones. The
+#    other ~80 modules stay only in rootfs.uzip; the running system
+#    kldloads them from there post-chroot.
 #
-echo "==> staging /boot"
-cp -aR "$WORK/rootfs/boot" "$WORK/cdroot/"
+echo "==> staging minimal /boot on cd9660"
+mkdir -p "$WORK/cdroot/boot/kernel"
+
+# Bootloader pieces (whichever exist; vary by FreeBSD release/arch)
+for f in cdboot loader loader.efi loader_lua loader_lua.efi \
+         loader_simp loader_simp.efi pmbr isoboot boot1.efi \
+         gptboot defaults device.hints lua fonts; do
+    if [ -e "$WORK/rootfs/boot/$f" ]; then
+        cp -aR "$WORK/rootfs/boot/$f" "$WORK/cdroot/boot/"
+    fi
+done
+
+# Kernel binary, gzipped so the loader unpacks it on read.
+gzip -9c "$WORK/rootfs/boot/kernel/kernel" > "$WORK/cdroot/boot/kernel/kernel"
+ls -lh "$WORK/cdroot/boot/kernel/kernel" \
+       "$WORK/rootfs/boot/kernel/kernel"
+
+# Modules: only what we need at boot.
+#   * geom_uzip / geom_union — explicitly loaded via loader.conf for the pivot
+#   * acpi, ahci, virtio_blk, virtio_pci, ahci/scsi_da/cd — typically
+#     auto-loaded by the kernel for storage in qemu/real hardware. Some
+#     are built into GENERIC, but ship them anyway in case the user
+#     boots a kernel without them.
+BOOT_MODULES="geom_uzip.ko geom_union.ko \
+              acpi.ko \
+              virtio.ko virtio_pci.ko virtio_blk.ko virtio_scsi.ko \
+              ahci.ko mfi.ko"
+for m in $BOOT_MODULES; do
+    if [ -f "$WORK/rootfs/boot/kernel/$m" ]; then
+        cp "$WORK/rootfs/boot/kernel/$m" "$WORK/cdroot/boot/kernel/"
+    fi
+done
+
 cp "$ROOT/boot/loader.conf" "$WORK/cdroot/boot/loader.conf"
+
+echo "==> /boot on cd9660:"
+du -sh "$WORK/cdroot/boot" "$WORK/cdroot/boot/kernel" || true
+ls -la "$WORK/cdroot/boot/kernel/" || true
 
 #
 # 9. EFI System Partition (FAT16, /EFI/BOOT/BOOTX64.EFI inside) and a copy
@@ -230,4 +271,10 @@ makefs -D -N "$WORK/rootfs/etc" -t cd9660 \
 
 ls -lh "$OUT/livecd.iso"
 sha256 "$OUT/livecd.iso" 2>/dev/null || sha256sum "$OUT/livecd.iso"
+
+echo
+echo "==> cdroot size breakdown:"
+du -sh "$WORK/cdroot"/* 2>/dev/null | sort -h
+echo
+echo "==> ISO total: $(ls -lh "$OUT/livecd.iso" | awk '{print $5}')"
 echo "==> DONE"

@@ -43,15 +43,27 @@ while [ ! -e /dev/md0.uzip ]; do
     fi
 done
 
-# Read the uncompressed rootfs size sidecar; size the swap-md upper.
-# gunion requires the upper to be a bit larger than the lower (it stores
-# its own bitmap + metadata at the head), so add 10% headroom plus 64 MB
-# slack. Also round up to the nearest MB — the byte-suffix form trips
-# EDOM in mdcreate_swap unless byte-aligned to sectorsize.
+# Size the writable upper.
+# md(4) -t swap is page-allocated on demand by the VM subsystem (same
+# semantics as Linux's tmpfs): the -s value is a *maximum*, not a
+# pre-allocation. Empty pages cost zero memory; only actual writes
+# consume RAM, and when RAM is full pages spill to system swap. So we
+# can size the upper generously without "wasting" anything.
+#
+# Default to ~50% of host RAM, matching Linux livecd convention (Ubuntu
+# casper, Arch archiso both default tmpfs to 50% of RAM). gunion has a
+# floor: upper >= lower + ~10% (its bitmap + metadata header), so clamp
+# up if half-RAM happens to be smaller.
 ROOTFS_BYTES=$(cat /rootfs.bytes)
 ROOTFS_MB=$(( (ROOTFS_BYTES + 1048575) / 1048576 ))
-UPPER_MB=$(( ROOTFS_MB + ROOTFS_MB / 10 + 64 ))
-echo "==> creating swap-backed upper md1 (size=${UPPER_MB} MB; lower is ${ROOTFS_MB} MB)"
+HOST_RAM_BYTES=$(sysctl -n hw.physmem)
+HOST_RAM_MB=$(( HOST_RAM_BYTES / 1048576 ))
+UPPER_MB=$(( HOST_RAM_MB / 2 ))
+MIN_UPPER_MB=$(( ROOTFS_MB + ROOTFS_MB / 10 + 64 ))
+if [ "$UPPER_MB" -lt "$MIN_UPPER_MB" ]; then
+    UPPER_MB="$MIN_UPPER_MB"
+fi
+echo "==> creating swap-backed upper md1 (size=${UPPER_MB} MB; lower=${ROOTFS_MB} MB; host ram=${HOST_RAM_MB} MB)"
 mdconfig -a -t swap -s "${UPPER_MB}m" -u 1
 
 # Compose the overlay. md0.uzip = read-only lower, md1 = writable upper.
