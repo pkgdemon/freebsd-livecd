@@ -96,23 +96,26 @@ expect {
     "exiting; init will chroot" { puts "stage 3 OK: init_chroot pivot signaled" }
 }
 
-# Stage 4: multi-user boot reached rc.local in the chroot
+# rc.local prints WRITE_OK first, then SMOKE_TEST_DONE -- match in that
+# order or expect will consume the second token while waiting for the first.
+
+# Stage 4: write to root succeeded (root is writable)
 expect {
     timeout {
-        puts "\nFAIL: SMOKE_TEST_DONE not seen within 6 minutes -- chroot/rc.local likely failed"
+        puts "\nFAIL: WRITE_OK not seen within 6 minutes -- root may not be writable"
         exit 1
     }
-    "SMOKE_TEST_DONE" { puts "stage 4 OK: rc.local executed inside chroot" }
+    "WRITE_OK" { puts "stage 4 OK: root is writable" }
+    "WRITE_FAIL" { puts "\nFAIL: write to root failed (WRITE_FAIL marker)"; exit 1 }
 }
 
-# Stage 5: write to root succeeded
+# Stage 5: rc.local completed
 expect {
     timeout {
-        puts "\nFAIL: WRITE_OK not seen -- root may not be writable"
+        puts "\nFAIL: SMOKE_TEST_DONE not seen within 6 minutes"
         exit 1
     }
-    "WRITE_OK" { puts "stage 5 OK: root is writable" }
-    "WRITE_FAIL" { puts "\nFAIL: write to root failed (WRITE_FAIL marker)"; exit 1 }
+    "SMOKE_TEST_DONE" { puts "stage 5 OK: rc.local executed inside chroot" }
 }
 
 # Cleanly shut down via qemu monitor
