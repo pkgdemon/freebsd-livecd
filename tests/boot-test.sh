@@ -27,7 +27,9 @@ log_user 1
 set iso [lindex $argv 0]
 
 spawn qemu-system-x86_64 \
-    -m 4G -smp 2 \
+    -m 4G \
+    -accel tcg,thread=single \
+    -cpu qemu64 \
     -cdrom $iso -boot d \
     -nographic -serial mon:stdio -display none \
     -no-reboot
