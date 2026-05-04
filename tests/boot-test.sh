@@ -38,7 +38,7 @@ expect {
         puts "\nFAIL: no kernel banner within 6 minutes"
         exit 1
     }
-    "FreeBSD"   { puts "\n[stage 1] OK: FreeBSD banner observed" }
+    "FreeBSD"   { puts "\nstage 1 OK: FreeBSD banner observed" }
 }
 
 # Stage 2: pivot script ran
@@ -47,7 +47,7 @@ expect {
         puts "\nFAIL: livecd init.sh did not start within 6 minutes"
         exit 1
     }
-    "livecd init.sh: starting" { puts "[stage 2] OK: init.sh started" }
+    "livecd init.sh: starting" { puts "stage 2 OK: init.sh started" }
 }
 
 # Stage 3: gunion overlay created and reroot issued
@@ -56,25 +56,25 @@ expect {
         puts "\nFAIL: reboot -r not reached within 6 minutes"
         exit 1
     }
-    "reboot -r" { puts "[stage 3] OK: reboot -r issued" }
+    "reboot -r" { puts "stage 3 OK: reboot -r issued" }
 }
 
 # Stage 4: post-pivot multi-user boot reached rc.local
 expect {
     timeout {
-        puts "\nFAIL: SMOKE_TEST_DONE not seen within 6 minutes — pivot likely failed"
+        puts "\nFAIL: SMOKE_TEST_DONE not seen within 6 minutes -- pivot likely failed"
         exit 1
     }
-    "SMOKE_TEST_DONE" { puts "[stage 4] OK: rc.local executed on new root" }
+    "SMOKE_TEST_DONE" { puts "stage 4 OK: rc.local executed on new root" }
 }
 
 # Stage 5: write to root succeeded
 expect {
     timeout {
-        puts "\nFAIL: WRITE_OK not seen — root may not be writable"
+        puts "\nFAIL: WRITE_OK not seen -- root may not be writable"
         exit 1
     }
-    "WRITE_OK" { puts "[stage 5] OK: root is writable" }
+    "WRITE_OK" { puts "stage 5 OK: root is writable" }
     "WRITE_FAIL" { puts "\nFAIL: write to root failed (WRITE_FAIL marker)"; exit 1 }
 }
 
