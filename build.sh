@@ -130,13 +130,25 @@ mkuzip $MKUZIP_FLAGS -j "$(sysctl -n hw.ncpu)" \
 # size sidecar that init.sh reads to size the swap-md upper
 cp "$WORK/rootfs.bytes" "$WORK/cdroot/rootfs.bytes"
 
-# pivot script — lives at cd9660 root since init runs /init.sh
+# Stage the init environment on the cd9660 root. The kernel mounts cd9660
+# as / and runs /sbin/init from there, which then runs /init.sh which uses
+# tools from /rescue. All three need to exist on the cd9660 itself.
+echo "==> staging init environment on cd9660"
+mkdir -p "$WORK/cdroot/sbin" "$WORK/cdroot/rescue" "$WORK/cdroot/sysroot" \
+         "$WORK/cdroot/dev"  "$WORK/cdroot/etc"
+
+# /rescue is a statically-linked crunchgen binary plus symlinks for every
+# tool name. Statically linked = no library dependencies, so it works
+# even on a bare cd9660 with no /lib.
+cp -aR "$WORK/rootfs/rescue/." "$WORK/cdroot/rescue/"
+
+# /sbin/init -> /rescue/init (the symlink is the standard fallback in
+# init_path; using /rescue/init avoids needing /lib/* on the cd9660).
+ln -sf /rescue/init "$WORK/cdroot/sbin/init"
+
+# pivot script
 cp "$ROOT/ramdisk/init.sh" "$WORK/cdroot/init.sh"
 chmod +x "$WORK/cdroot/init.sh"
-
-# pre-create /sysroot as an empty mountpoint on the cd9660; init.sh can't
-# mkdir it at boot because cd9660 is read-only at runtime
-mkdir -p "$WORK/cdroot/sysroot"
 
 ls -lh "$WORK/cdroot/rootfs.uzip"
 
