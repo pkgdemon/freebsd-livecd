@@ -43,14 +43,16 @@ while [ ! -e /dev/md0.uzip ]; do
     fi
 done
 
-# Read the uncompressed rootfs size sidecar; size the swap-md upper to match.
-# Round up to the nearest MB — the byte-suffix form trips EDOM in mdcreate_swap
-# unless the byte count is sectorsize-aligned (4096 on modern md), which raw
-# `du -sk * 1024` typically isn't.
+# Read the uncompressed rootfs size sidecar; size the swap-md upper.
+# gunion requires the upper to be a bit larger than the lower (it stores
+# its own bitmap + metadata at the head), so add 10% headroom plus 64 MB
+# slack. Also round up to the nearest MB — the byte-suffix form trips
+# EDOM in mdcreate_swap unless byte-aligned to sectorsize.
 ROOTFS_BYTES=$(cat /rootfs.bytes)
 ROOTFS_MB=$(( (ROOTFS_BYTES + 1048575) / 1048576 ))
-echo "==> creating swap-backed upper md1 (size=${ROOTFS_MB} MB, rounded from ${ROOTFS_BYTES} bytes)"
-mdconfig -a -t swap -s "${ROOTFS_MB}m" -u 1
+UPPER_MB=$(( ROOTFS_MB + ROOTFS_MB / 10 + 64 ))
+echo "==> creating swap-backed upper md1 (size=${UPPER_MB} MB; lower is ${ROOTFS_MB} MB)"
+mdconfig -a -t swap -s "${UPPER_MB}m" -u 1
 
 # Compose the overlay. md0.uzip = read-only lower, md1 = writable upper.
 # /rescue/geom is statically linked and can't dlopen /lib/geom/geom_union.so,
