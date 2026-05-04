@@ -53,8 +53,10 @@ echo "==> creating swap-backed upper md1 (size=${ROOTFS_MB} MB, rounded from ${R
 mdconfig -a -t swap -s "${ROOTFS_MB}m" -u 1
 
 # Compose the overlay. md0.uzip = read-only lower, md1 = writable upper.
+# Using `geom union create` rather than `gunion create` because /rescue
+# ships /rescue/geom (the multi-class GEOM tool) but not a `gunion` alias.
 echo "==> creating gunion overlay"
-gunion create md1 md0.uzip
+geom union create md1 md0.uzip
 UNION_DEV=/dev/md1-md0.uzip.union
 if [ ! -e "$UNION_DEV" ]; then
     echo "ERROR: gunion device $UNION_DEV not present after create"
