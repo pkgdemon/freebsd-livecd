@@ -18,18 +18,34 @@ EXP=tests/boot.exp
 echo "==> boot test: $ISO"
 ls -lh "$ISO"
 
-# Generate the expect script. Pass the ISO path as the first argument.
+# Pick the fastest available accelerator. Ubuntu's qemu 8.x has a known
+# iothread-mutex assertion bug that crashes when FreeBSD enters long mode;
+# KVM sidesteps the TCG path entirely, and q35 machine type avoids the
+# same code path under TCG.
+if [ -e /dev/kvm ]; then
+    sudo chmod 666 /dev/kvm 2>/dev/null || true
+fi
+if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+    ACCEL_FLAGS="-accel kvm -cpu host -machine q35"
+    echo "==> using KVM acceleration"
+else
+    ACCEL_FLAGS="-accel tcg,thread=single -cpu qemu64 -machine q35"
+    echo "==> using TCG (single-thread) on q35 machine"
+fi
+export ACCEL_FLAGS
+
+# Generate the expect script. ISO path passed as first argv.
 cat > "$EXP" <<'EOF'
-set timeout 360
+set timeout 480
 log_file -a tests/boot.log
 log_user 1
 
 set iso [lindex $argv 0]
+set accel_flags [split $env(ACCEL_FLAGS) " "]
 
-spawn qemu-system-x86_64 \
+eval spawn qemu-system-x86_64 \
     -m 4G \
-    -accel tcg,thread=single \
-    -cpu qemu64 \
+    $accel_flags \
     -cdrom $iso -boot d \
     -nographic -serial mon:stdio -display none \
     -no-reboot
