@@ -1,0 +1,21 @@
+#!/bin/sh
+# rc.local — runs at the end of multi-user boot.
+# Used by tests/boot-test.sh to confirm pivot worked and root is writable.
+
+echo ""
+echo "================== livecd smoke-test =================="
+echo "rootfs is mounted at:"
+mount | head -1
+
+echo ""
+echo "testing write to root..."
+if touch /smoke-test 2>/dev/null; then
+    rm -f /smoke-test
+    echo "WRITE_OK"
+else
+    echo "WRITE_FAIL"
+fi
+
+echo "SMOKE_TEST_DONE"
+echo "================== livecd smoke-test =================="
+echo ""

@@ -1,0 +1,102 @@
+name: build live ISO
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (FreeBSD ${{ matrix.freebsd }} / ${{ matrix.compress }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        freebsd: ['15.0']
+        compress: ['zstd']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
+      - name: cache FreeBSD distfiles
+        uses: actions/cache@v4
+        with:
+          path: distfiles
+          key: distfiles-${{ matrix.freebsd }}-${{ hashFiles('pkglist.txt') }}
+
+      - name: build ISO inside FreeBSD VM
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: ${{ matrix.freebsd }}
+          mem: 8192
+          cpu: 4
+          usesh: true
+          sync: rsync
+          copyback: true
+          prepare: |
+            pkg install -y bash
+          run: |
+            set -eu
+            export FREEBSD_VERSION=${{ matrix.freebsd }}
+            export COMPRESS=${{ matrix.compress }}
+            sh build.sh
+
+      - name: artifact summary
+        run: |
+          ls -lh out/
+          (cd out && sha256sum *.iso) | tee out/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: livecd-${{ matrix.freebsd }}-${{ matrix.compress }}
+          path: |
+            out/livecd.iso
+            out/SHA256SUMS
+          retention-days: 14
+          if-no-files-found: error
+
+  boot-test:
+    name: boot smoke-test
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: livecd-15.0-zstd
+          path: out/
+
+      - name: install qemu + expect
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 expect ovmf
+
+      - name: boot test
+        run: |
+          chmod +x tests/boot-test.sh
+          ./tests/boot-test.sh out/livecd.iso
+
+      - name: upload boot log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-log
+          path: tests/boot.log
+          if-no-files-found: ignore
