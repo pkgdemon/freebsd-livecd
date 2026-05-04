@@ -144,23 +144,37 @@ cp -aR "$WORK/rootfs/boot/." "$WORK/cdroot/boot/"
 cp "$ROOT/boot/loader.conf" "$WORK/cdroot/boot/loader.conf"
 
 #
-# 10. EFI System Partition image (BOOTX64.EFI inside)
+# 10. EFI System Partition image (BOOTX64.EFI inside) AND a copy on the
+#     cd9660 root, so OVMF can find the bootloader either through the
+#     El Torito EFI entry or by reading the cd9660 directly.
+#     UEFI spec wants FAT16+ for ESP; use fat_type=16 with a 32 MiB image.
 #
-echo "==> building EFI System Partition"
+echo "==> building EFI System Partition + cd9660 EFI overlay"
 ESP="$WORK/efi.img"
 ESPROOT="$WORK/efi-staging"
 mkdir -p "$ESPROOT/EFI/BOOT"
-# Prefer loader_lua.efi (Lua-based, modern); fall back to loader.efi
+
+# Pick a loader.efi: prefer loader_lua.efi (modern), fall back to loader.efi.
 if [ -f "$WORK/rootfs/boot/loader_lua.efi" ]; then
-    cp "$WORK/rootfs/boot/loader_lua.efi" "$ESPROOT/EFI/BOOT/BOOTX64.EFI"
+    EFI_LOADER="$WORK/rootfs/boot/loader_lua.efi"
 elif [ -f "$WORK/rootfs/boot/loader.efi" ]; then
-    cp "$WORK/rootfs/boot/loader.efi" "$ESPROOT/EFI/BOOT/BOOTX64.EFI"
+    EFI_LOADER="$WORK/rootfs/boot/loader.efi"
 else
     echo "ERROR: no loader.efi found in base.txz boot/"
     exit 1
 fi
-makefs -t msdos -s 4m -o fat_type=12,sectors_per_cluster=1 \
+echo "==> EFI loader: $EFI_LOADER"
+
+cp "$EFI_LOADER" "$ESPROOT/EFI/BOOT/BOOTX64.EFI"
+
+# Build the El Torito ESP image (FAT16, 32 MiB)
+makefs -t msdos -s 32m -o fat_type=16,sectors_per_cluster=1 \
     "$ESP" "$ESPROOT"
+
+# Also stage /EFI/BOOT/BOOTX64.EFI directly on the cd9660 — UEFI firmwares
+# that read ISO9660 (incl. OVMF) will find it via the default boot path.
+mkdir -p "$WORK/cdroot/EFI/BOOT"
+cp "$EFI_LOADER" "$WORK/cdroot/EFI/BOOT/BOOTX64.EFI"
 
 #
 # 11. final cd9660 image: hybrid BIOS + UEFI El Torito
