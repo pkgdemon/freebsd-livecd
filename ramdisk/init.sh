@@ -44,9 +44,13 @@ while [ ! -e /dev/md0.uzip ]; do
 done
 
 # Read the uncompressed rootfs size sidecar; size the swap-md upper to match.
+# Round up to the nearest MB — the byte-suffix form trips EDOM in mdcreate_swap
+# unless the byte count is sectorsize-aligned (4096 on modern md), which raw
+# `du -sk * 1024` typically isn't.
 ROOTFS_BYTES=$(cat /rootfs.bytes)
-echo "==> creating swap-backed upper md1 (size=${ROOTFS_BYTES} bytes)"
-mdconfig -a -t swap -s "${ROOTFS_BYTES}b" -u 1
+ROOTFS_MB=$(( (ROOTFS_BYTES + 1048575) / 1048576 ))
+echo "==> creating swap-backed upper md1 (size=${ROOTFS_MB} MB, rounded from ${ROOTFS_BYTES} bytes)"
+mdconfig -a -t swap -s "${ROOTFS_MB}m" -u 1
 
 # Compose the overlay. md0.uzip = read-only lower, md1 = writable upper.
 echo "==> creating gunion overlay"
