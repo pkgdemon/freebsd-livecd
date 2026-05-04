@@ -133,17 +133,14 @@ mv "$WORK/mfsroot.ufs.gz" "$WORK/cdroot/boot/mfsroot"
 ls -lh "$WORK/cdroot/boot/mfsroot"
 
 #
-# 9. stage kernel + modules + loader binaries on the cd9660 carrier
+# 9. stage kernel + modules + loader binaries on the cd9660 carrier.
+#    Copy the entire /boot tree from the rootfs — the Lua-based loader
+#    needs /boot/lua/, /boot/defaults/, /boot/device.hints, fonts, etc.
+#    Then drop our loader.conf on top.
 #
 echo "==> staging /boot"
-cp -aR "$WORK/rootfs/boot/kernel"  "$WORK/cdroot/boot/"
-# Bootloader pieces — copy whichever exist (vary by FreeBSD version/arch)
-for f in cdboot loader loader.efi loader_simp loader_simp.efi \
-         loader_lua loader_lua.efi pmbr isoboot boot1.efi gptboot; do
-    if [ -f "$WORK/rootfs/boot/$f" ]; then
-        cp "$WORK/rootfs/boot/$f" "$WORK/cdroot/boot/"
-    fi
-done
+cp -aR "$WORK/rootfs/boot/." "$WORK/cdroot/boot/"
+# Our loader.conf overrides /boot/defaults/loader.conf knobs as needed
 cp "$ROOT/boot/loader.conf" "$WORK/cdroot/boot/loader.conf"
 
 #
