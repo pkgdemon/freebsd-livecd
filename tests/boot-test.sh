@@ -18,21 +18,38 @@ EXP=tests/boot.exp
 echo "==> boot test: $ISO"
 ls -lh "$ISO"
 
-# Pick the fastest available accelerator. Ubuntu's qemu 8.x has a known
-# iothread-mutex assertion bug that crashes when FreeBSD enters long mode;
-# KVM sidesteps the TCG path entirely, and q35 machine type avoids the
-# same code path under TCG.
+# Pick acceleration. KVM if available; TCG fallback. Both work via the
+# UEFI path below (UEFI/OVMF + loader.efi avoids the BTX legacy code that
+# crashes both KVM (suberror 3 / pusha in long mode) and TCG (qemu 8.x
+# iothread mutex assertion).
 if [ -e /dev/kvm ]; then
     sudo chmod 666 /dev/kvm 2>/dev/null || true
 fi
 if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
-    ACCEL_FLAGS="-accel kvm -cpu host -machine q35"
+    ACCEL_FLAGS="-accel kvm -cpu host"
     echo "==> using KVM acceleration"
 else
-    ACCEL_FLAGS="-accel tcg,thread=single -cpu qemu64 -machine q35"
-    echo "==> using TCG (single-thread) on q35 machine"
+    ACCEL_FLAGS="-accel tcg,thread=single -cpu qemu64"
+    echo "==> using TCG (single-thread)"
 fi
-export ACCEL_FLAGS
+
+# Find OVMF firmware (split or unified format depending on Ubuntu version)
+OVMF=""
+for f in /usr/share/OVMF/OVMF_CODE.fd \
+         /usr/share/ovmf/OVMF.fd \
+         /usr/share/qemu/OVMF.fd; do
+    if [ -f "$f" ]; then
+        OVMF="$f"
+        break
+    fi
+done
+if [ -z "$OVMF" ]; then
+    echo "ERROR: no OVMF firmware found"
+    exit 1
+fi
+echo "==> using UEFI firmware: $OVMF"
+
+export ACCEL_FLAGS OVMF
 
 # Generate the expect script. ISO path passed as first argv.
 cat > "$EXP" <<'EOF'
@@ -45,9 +62,11 @@ set accel_flags [split $env(ACCEL_FLAGS) " "]
 
 eval spawn qemu-system-x86_64 \
     -m 4G \
+    -machine q35 \
+    -bios $env(OVMF) \
     $accel_flags \
     -cdrom $iso -boot d \
-    -nographic -serial mon:stdio -display none \
+    -display none -serial stdio \
     -no-reboot
 
 # Stage 1: kernel + loader come up
