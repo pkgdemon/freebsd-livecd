@@ -65,7 +65,32 @@ else
 fi
 
 #
-# 4. apply local overlays (etc/rc.conf, etc/rc.local, etc/motd.template, ...)
+# 4. slim the rootfs. None of these are needed for a live-boot smoke test
+#    and they collectively account for ~600 MB before compression. The
+#    UEFI loader's staging area can't hold the whole base + kernel +
+#    mfsroot at once otherwise.
+#
+echo "==> slimming rootfs"
+rm -rf \
+    "$WORK/rootfs/usr/share/man" \
+    "$WORK/rootfs/usr/share/doc" \
+    "$WORK/rootfs/usr/share/info" \
+    "$WORK/rootfs/usr/share/locale" \
+    "$WORK/rootfs/usr/share/games" \
+    "$WORK/rootfs/usr/share/examples" \
+    "$WORK/rootfs/usr/share/openssl" \
+    "$WORK/rootfs/usr/share/dict" \
+    "$WORK/rootfs/usr/share/calendar" \
+    "$WORK/rootfs/usr/include" \
+    "$WORK/rootfs/usr/tests" \
+    "$WORK/rootfs/usr/lib/debug" \
+    "$WORK/rootfs/usr/libdata/lint" \
+    "$WORK/rootfs/var/db/etcupdate"
+# Strip kernel module debug symbols (large)
+find "$WORK/rootfs/boot/kernel" -name '*.symbols' -delete 2>/dev/null || true
+
+#
+# 5. apply local overlays (etc/rc.conf, etc/rc.local, etc/motd.template, ...)
 #
 if [ -d "$ROOT/overlays" ]; then
     echo "==> applying overlays"

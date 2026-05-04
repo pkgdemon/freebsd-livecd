@@ -61,7 +61,7 @@ set iso [lindex $argv 0]
 set accel_flags [split $env(ACCEL_FLAGS) " "]
 
 eval spawn qemu-system-x86_64 \
-    -m 4G \
+    -m 8G \
     -machine q35 \
     -bios $env(OVMF) \
     $accel_flags \
