@@ -1,4 +1,4 @@
-# freebsd-livecd
+# freebsd-livecd-gunion
 
 A FreeBSD live ISO build system. Produces a bootable cd9660 image with a
 mkuzip-compressed UFS rootfs and a `gunion(8)` writable overlay, pivoted
@@ -8,7 +8,9 @@ into via `init_chroot` (FreeBSD's analog of Linux's `switch_root`).
 
 ```
 cd9660 ISO  (kernel root, stays mounted forever, hidden from chroot)
-  /boot/kernel/kernel        loader-readable raw
+  /boot/kernel/kernel.gz     gzipped kernel; loader auto-decompresses
+  /boot/kernel/*.ko          ~8 essential modules only (geom_uzip,
+                             geom_union, virtio_*, ahci, acpi, mfi)
   /boot/loader.conf          loads geom_uzip + geom_union, sets
                              init_script=/init.sh + init_shell=/rescue/sh
   /sbin/init -> /rescue/init real FreeBSD init binary (statically linked)
@@ -17,7 +19,7 @@ cd9660 ISO  (kernel root, stays mounted forever, hidden from chroot)
   /rescue/                   statically linked busybox-equivalent
   /lib/, /libexec/           shared libs + ld-elf.so.1 for /sbin/geom
   /lib/geom/geom_union.so    union class library dlopen'd by /sbin/geom
-  /init.sh                   pivot script
+  /init.sh                   pivot script (silent in normal boot)
   /rootfs.uzip               compressed UFS rootfs (the real live system)
   /rootfs.bytes              uncompressed-size sidecar
   /sysroot/                  empty mountpoint for the gunion overlay
@@ -92,21 +94,21 @@ of RAM). On a 4 GB system that's a 2 GB ceiling for live writes; on
 8 GB, 4 GB. The minimum is whatever gunion's metadata bitmap requires
 (~lower size + 10% + 64 MB), so very low-RAM hosts still boot.
 
-## Goals (current vs aspirational)
+The lower UFS is sized at `content + LIVE_HEADROOM` (default 1 GiB) so
+the live system reports free space on `df` from boot. Empty UFS blocks
+compress to almost nothing under mkuzip's zstd + dedup, so the headroom
+costs essentially zero on the ISO.
 
-| | current | target |
-|---|---|---|
-| ISO size | ~1.6 GB | ~450 MB (after `/boot/kernel` trim + `gzip kernel`) |
-| Memory at idle | ~50–100 MB | same |
-| Writable headroom | 50% of host RAM | same |
-| Boot time (KVM) | seconds | same |
-| Architecture | cd9660 + uzip + gunion + init_chroot | same |
+## Measured sizes
 
-The 1.6 GB is dominated by uncompressed `/boot/kernel` (kernel + ~80
-modules raw) on the carrier. Most of those modules are never used at
-boot — they're duplicated in compressed form inside `rootfs.uzip` for
-post-chroot `kldload`. Trimming the carrier to just the loader-needed
-modules + gzipping the kernel is the next planned size win.
+| Build | Content | Compressed (rootfs.uzip) | ISO total |
+|---|---|---|---|
+| Minimal base (no pkglist) | 803 MiB | 230 MiB | **396 MiB** |
+| + xorg + KDE Plasma 6 | 10.3 GiB | 3.7 GiB | **3.8 GiB** |
+
+Compression ratios: ~29% for base content, ~36% for KDE-heavy content.
+Comparable to squashfs zstd. Build time on minimal: ~7 min in CI; with
+KDE: ~36 min (mkuzip zstd-19 on 10 GiB content is the bottleneck).
 
 ## Trade-offs vs Linux squashfs+overlayfs
 
@@ -155,39 +157,38 @@ Environment knobs:
   zstd is broken — see [PR 267082](https://bugs.freebsd.org/267082))
 - `LABEL` (default `LIVECD`)
 - `ARCH` (default `amd64`)
+- `LIVE_HEADROOM` (default `1g`) — free space the live system gets in
+  addition to installed content. The lower UFS is sized at `content +
+  LIVE_HEADROOM`.
 
 ## Building in CI
 
 `.github/workflows/build.yml` runs the build inside `vmactions/freebsd-vm`
 on `ubuntu-latest`. Each push produces an ISO artifact; a follow-up
 job boots it in qemu (KVM if `/dev/kvm` is available, else TCG) and
-asserts the live system reaches multi-user via `init_chroot` and is
-writable.
-
-The boot-test goes through five stages, each gated by a marker on the
-serial console:
-
-1. FreeBSD banner (loader → kernel)
-2. `livecd init.sh: starting` (script invoked by init)
-3. `exiting; init will chroot` (gunion built, init_chroot signaled)
-4. `WRITE_OK` (root is writable)
-5. `SMOKE_TEST_DONE` (rc.local completed in the chroot)
+asserts the live system reaches the getty `login:` prompt — that single
+marker confirms the entire pipeline (loader → kernel → cd9660 mount →
+init.sh → gunion overlay → init_chroot pivot → multi-user) succeeded.
 
 ## Repository layout
 
 ```
-freebsd-livecd/
+freebsd-livecd-gunion/
 ├── build.sh                  orchestrator (runs on FreeBSD)
-├── ramdisk/init.sh           pivot script (lives at cd9660 root)
+├── ramdisk/init.sh           pivot script (lives at cd9660 root, silent
+│                             at runtime)
 ├── boot/loader.conf          modules + init_script kenv
-├── overlays/etc/rc.conf      live-system rc.conf (root_rw_mount=NO etc.)
-├── overlays/etc/rc.local     smoke-test markers
+├── overlays/etc/rc.conf      live-system rc.conf
 ├── pkglist.txt               one pkg per line (empty = minimal base)
-├── tests/boot-test.sh        qemu+expect smoke test
+├── tests/boot-test.sh        qemu+expect smoke test (single login: marker)
 ├── .github/workflows/        CI
 ├── LICENSE                   BSD 2-clause, Joseph Maloney
 └── README.md
 ```
+
+## Further reading
+
+[Architecture and design notes](https://pkgdemon.github.io/freebsd-livecd-plan.html)
 
 ## License
 
