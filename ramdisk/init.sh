@@ -17,7 +17,11 @@ set -eu
 PATH=/rescue
 export PATH
 
-echo "==> livecd init.sh: starting"
+# Silence diagnostic output. End users shouldn't see init.sh's internals
+# during boot (mdconfig calls, gunion creation, kenv echoes, etc.). If
+# something fails, set -e bubbles up and init drops to single-user where
+# the user can investigate.
+exec 1>/dev/null 2>&1
 
 # Defensive module loads (also requested in /boot/loader.conf, but be safe
 # in case someone built a kernel without the loader.conf entries).

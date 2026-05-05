@@ -50,6 +50,18 @@ mkdir -p "$WORK/rootfs"
 tar -xJf "$DIST/base.txz"   -C "$WORK/rootfs"
 tar -xJf "$DIST/kernel.txz" -C "$WORK/rootfs"
 
+# base.txz ships /etc/login.conf but not the compiled /etc/login.conf.db.
+# Without the .db, login_getclass() can't find any class and logs a noisy
+# warning at boot ("login_getclass: unknown class 'daemon'"). The FreeBSD
+# installer rebuilds it via cap_mkdb during install; we have to do the
+# same since we skip bsdinstall.
+cap_mkdb "$WORK/rootfs/etc/login.conf"
+
+# Same idea for the password databases. base.txz may or may not ship the
+# *.db files depending on version; rebuild them to be safe so getpwnam()
+# and friends work without warnings.
+pwd_mkdb -p -d "$WORK/rootfs/etc" "$WORK/rootfs/etc/master.passwd"
+
 #
 # 3. install packages from pkglist.txt (skipped if empty/comments-only)
 #
