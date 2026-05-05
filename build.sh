@@ -196,6 +196,18 @@ mkdir -p "$WORK/cdroot/sbin" "$WORK/cdroot/rescue" "$WORK/cdroot/sysroot" \
 # /sbin/init -> /rescue/init. /rescue/init is statically linked.
 ln -sf /rescue/init "$WORK/cdroot/sbin/init"
 
+# Ship /etc/login.conf (+ compiled .db) on the cd9660 root.
+# Without this, login_getclass() called early in boot -- before the
+# init_chroot pivot fully takes effect for the calling process -- sees
+# cd9660's empty /etc and logs a noisy warning:
+#   init - - login_getclass: unknown class 'daemon'
+# GhostBSD's livecd hits the same issue and ships login.conf in their
+# ramdisk for the same reason. lib/libutil/login_cap.c:349 emits the
+# warning; it goes away as soon as login.conf is reachable.
+cp "$WORK/rootfs/etc/login.conf" "$WORK/cdroot/etc/login.conf"
+[ -f "$WORK/rootfs/etc/login.conf.db" ] && \
+    cp "$WORK/rootfs/etc/login.conf.db" "$WORK/cdroot/etc/login.conf.db"
+
 # /sbin/geom (dynamic) + the libs it dlopens. /rescue/geom is statically
 # linked and can't load class libraries (no dlopen in static binaries),
 # so it returns "Unknown command: create" for union. Use the real
