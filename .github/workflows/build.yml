@@ -1,4 +1,4 @@
-name: build live ISO
+name: ci
 
 on:
   push:
@@ -11,13 +11,14 @@ permissions:
 
 jobs:
   build:
-    name: build (FreeBSD ${{ matrix.freebsd }} / ${{ matrix.compress }})
+    name: build (FreeBSD ${{ matrix.freebsd }} ${{ matrix.arch }})
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
         freebsd: ['15.0']
+        arch: ['amd64']
         compress: ['zstd']
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +38,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: distfiles
-          key: distfiles-${{ matrix.freebsd }}-${{ hashFiles('pkglist.txt') }}
+          key: distfiles-${{ matrix.freebsd }}-${{ matrix.arch }}-${{ hashFiles('pkglist.txt') }}
 
       - name: build ISO inside FreeBSD VM
         uses: vmactions/freebsd-vm@v1
@@ -53,6 +54,7 @@ jobs:
           run: |
             set -eu
             export FREEBSD_VERSION=${{ matrix.freebsd }}
+            export ARCH=${{ matrix.arch }}
             export COMPRESS=${{ matrix.compress }}
             sh build.sh
 
@@ -63,24 +65,30 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: livecd-${{ matrix.freebsd }}-${{ matrix.compress }}
+          name: livecd-${{ matrix.freebsd }}-${{ matrix.arch }}-${{ matrix.compress }}
           path: |
             out/livecd.iso
             out/SHA256SUMS
           retention-days: 14
           if-no-files-found: error
 
-  boot-test:
-    name: boot smoke-test
+  test:
+    name: test (FreeBSD ${{ matrix.freebsd }} ${{ matrix.arch }})
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        freebsd: ['15.0']
+        arch: ['amd64']
+        compress: ['zstd']
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
-          name: livecd-15.0-zstd
+          name: livecd-${{ matrix.freebsd }}-${{ matrix.arch }}-${{ matrix.compress }}
           path: out/
 
       - name: install qemu + expect
@@ -97,35 +105,39 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: boot-log
+          name: boot-log-${{ matrix.freebsd }}-${{ matrix.arch }}
           path: tests/boot.log
           if-no-files-found: ignore
 
   release:
-    name: publish continuous release
-    needs: [build, boot-test]
+    name: release (FreeBSD ${{ matrix.freebsd }} ${{ matrix.arch }})
+    needs: [build, test]
     # Only publish when both jobs pass on a push to main. PRs and other
     # branches build + test but never publish.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        freebsd: ['15.0']
+        arch: ['amd64']
+        compress: ['zstd']
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
-          name: livecd-15.0-zstd
+          name: livecd-${{ matrix.freebsd }}-${{ matrix.arch }}-${{ matrix.compress }}
           path: out/
 
       - name: prepare release assets (rename to dated public name)
         id: prep
         run: |
           set -eu
-          FREEBSD_VERSION=15.0
-          ARCH=amd64
           DATE=$(date -u +%Y%m%d)
-          DATED="FreeBSD-${FREEBSD_VERSION}-${ARCH}-gunion-${DATE}.iso"
+          DATED="FreeBSD-${{ matrix.freebsd }}-${{ matrix.arch }}-gunion-${DATE}.iso"
           cp out/livecd.iso "out/${DATED}"
           ( cd out && sha256sum "${DATED}" > "${DATED}.sha256" )
           ls -lh "out/${DATED}" "out/${DATED}.sha256"
@@ -135,6 +147,11 @@ jobs:
       # no chunking, no retry). softprops/action-gh-release uses Octokit's
       # chunked upload with retries -- canonical path for big release assets.
       # Delete previous continuous release first so old assets don't pile up.
+      #
+      # NOTE: when matrix grows to multiple cells (e.g. adding aarch64 or a
+      # zlib variant), this delete will race across cells. At that point
+      # refactor to a single non-matrix release job that downloads all
+      # artifacts and publishes them together.
       - name: delete previous continuous release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
