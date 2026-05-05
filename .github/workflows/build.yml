@@ -100,3 +100,62 @@ jobs:
           name: boot-log
           path: tests/boot.log
           if-no-files-found: ignore
+
+  release:
+    name: publish continuous release
+    needs: [build, boot-test]
+    # Only publish when both jobs pass on a push to main. PRs and other
+    # branches build + test but never publish.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: livecd-15.0-zstd
+          path: out/
+
+      - name: prepare release assets (rename to dated public name)
+        id: prep
+        run: |
+          set -eu
+          FREEBSD_VERSION=15.0
+          ARCH=amd64
+          DATE=$(date -u +%Y%m%d)
+          DATED="FreeBSD-${FREEBSD_VERSION}-${ARCH}-gunion-${DATE}.iso"
+          cp out/livecd.iso "out/${DATED}"
+          ( cd out && sha256sum "${DATED}" > "${DATED}.sha256" )
+          ls -lh "out/${DATED}" "out/${DATED}.sha256"
+          echo "dated=${DATED}" >> "$GITHUB_OUTPUT"
+
+      # `gh release create` wedges silently on big ISO uploads (single PUT,
+      # no chunking, no retry). softprops/action-gh-release uses Octokit's
+      # chunked upload with retries -- canonical path for big release assets.
+      # Delete previous continuous release first so old assets don't pile up.
+      - name: delete previous continuous release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete continuous --yes --cleanup-tag \
+            --repo "$GITHUB_REPOSITORY" || true
+
+      - name: publish to continuous release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: continuous
+          name: Continuous build
+          body: |
+            Rolling continuous build. Refreshed automatically every push to
+            `main` after the build + boot smoke-test both pass.
+
+            Build log: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            Commit: ${{ github.sha }}
+          prerelease: true
+          target_commitish: ${{ github.sha }}
+          fail_on_unmatched_files: true
+          files: |
+            out/${{ steps.prep.outputs.dated }}
+            out/${{ steps.prep.outputs.dated }}.sha256

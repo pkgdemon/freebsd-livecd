@@ -4,6 +4,14 @@ A FreeBSD live ISO build system. Produces a bootable cd9660 image with a
 mkuzip-compressed UFS rootfs and a `gunion(8)` writable overlay, pivoted
 into via `init_chroot` (FreeBSD's analog of Linux's `switch_root`).
 
+## Download
+
+**[Latest ISO →](https://github.com/pkgdemon/freebsd-livecd-gunion/releases/tag/continuous)**
+
+Continuous build, rebuilt automatically on every push to `main` after the
+build + boot smoke-test both pass. Filename pattern:
+`FreeBSD-<ver>-<arch>-gunion-<YYYYMMDD>.iso` plus a matching `.sha256`.
+
 ## Architecture
 
 ```
