@@ -1,3 +1,4 @@
 # One pkg per line; lines starting with # are ignored.
-# Empty for the smallest possible image — base + kernel only.
 # Add packages here once base boots cleanly.
+xorg
+kde5

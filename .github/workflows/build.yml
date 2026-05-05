@@ -13,7 +13,7 @@ jobs:
   build:
     name: build (FreeBSD ${{ matrix.freebsd }} / ${{ matrix.compress }})
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:

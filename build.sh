@@ -11,6 +11,13 @@ set -eu
 : "${LABEL:=LIVECD}"
 ARCH=${ARCH:-amd64}
 
+# How much *free* space the live system gets in addition to the installed
+# content. The lower UFS is sized at content + LIVE_HEADROOM, so the
+# build never fails on size regardless of pkglist. Empty space (zero
+# blocks) compresses to almost nothing via mkuzip zstd + dedup, so the
+# ISO size is effectively a function of *content* size, not disk size.
+: "${LIVE_HEADROOM:=1g}"
+
 ROOT=$(cd "$(dirname "$0")" && pwd)
 WORK=$ROOT/work
 OUT=$ROOT/out
@@ -107,15 +114,34 @@ cat > "$WORK/rootfs/etc/fstab" <<'EOF'
 EOF
 
 #
-# 7. record uncompressed size, makefs UFS, mkuzip
+# 7. Compute lower size = content + LIVE_HEADROOM, makefs UFS, mkuzip.
+#    Empty space compresses to ~nothing via zstd + dedup, so we size
+#    generously to give the live system free space without inflating
+#    the ISO. Build never fails on size regardless of pkglist.
 #
-ROOTFS_BYTES=$(du -sk "$WORK/rootfs" | awk '{print $1*1024}')
-echo "$ROOTFS_BYTES" > "$WORK/rootfs.bytes"
-echo "==> rootfs uncompressed = $ROOTFS_BYTES bytes ($((ROOTFS_BYTES / 1024 / 1024)) MiB)"
+case "$LIVE_HEADROOM" in
+    *[gG]) HEADROOM_BYTES=$(( ${LIVE_HEADROOM%[gG]} * 1024 * 1024 * 1024 )) ;;
+    *[mM]) HEADROOM_BYTES=$(( ${LIVE_HEADROOM%[mM]} * 1024 * 1024 )) ;;
+    *[kK]) HEADROOM_BYTES=$(( ${LIVE_HEADROOM%[kK]} * 1024 )) ;;
+    *)     HEADROOM_BYTES="$LIVE_HEADROOM" ;;
+esac
+
+CONTENT_BYTES=$(du -sk "$WORK/rootfs" | awk '{print $1*1024}')
+LOWER_BYTES=$(( CONTENT_BYTES + HEADROOM_BYTES ))
+echo "==> rootfs content = $CONTENT_BYTES bytes ($((CONTENT_BYTES / 1024 / 1024)) MiB)"
+echo "==> live headroom  = $HEADROOM_BYTES bytes ($((HEADROOM_BYTES / 1024 / 1024)) MiB)"
+echo "==> ufs lower size = $LOWER_BYTES bytes ($((LOWER_BYTES / 1024 / 1024)) MiB)"
 
 echo "==> makefs ffs"
 makefs -t ffs -o version=2,label=ROOTFS \
+    -s "$LOWER_BYTES" \
     "$WORK/rootfs.ufs" "$WORK/rootfs"
+
+# /rootfs.bytes records the UFS LOWER's logical size -- init.sh reads
+# this to size the swap-md upper at lower * 1.1 + 64 (gunion's metadata
+# floor). Recording the content size here would leave upper undersized
+# vs the lower and gunion would refuse to create.
+echo "$LOWER_BYTES" > "$WORK/rootfs.bytes"
 
 mkdir -p "$WORK/cdroot"
 case "$COMPRESS" in
