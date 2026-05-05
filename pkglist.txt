@@ -1,4 +1,4 @@
 # One pkg per line; lines starting with # are ignored.
-# Add packages here once base boots cleanly.
+# Packages to install into the live rootfs.
 xorg
-kde5
+kde
