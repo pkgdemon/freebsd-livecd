@@ -128,6 +128,10 @@ esac
 
 CONTENT_BYTES=$(du -sk "$WORK/rootfs" | awk '{print $1*1024}')
 LOWER_BYTES=$(( CONTENT_BYTES + HEADROOM_BYTES ))
+# Round up to a 1 MiB boundary so makefs's bsize rounding doesn't push
+# the size past the requested max. makefs default bsize is 32 KiB; 1 MiB
+# is comfortably divisible by it and any plausible future change.
+LOWER_BYTES=$(( (LOWER_BYTES + 1048575) / 1048576 * 1048576 ))
 echo "==> rootfs content = $CONTENT_BYTES bytes ($((CONTENT_BYTES / 1024 / 1024)) MiB)"
 echo "==> live headroom  = $HEADROOM_BYTES bytes ($((HEADROOM_BYTES / 1024 / 1024)) MiB)"
 echo "==> ufs lower size = $LOWER_BYTES bytes ($((LOWER_BYTES / 1024 / 1024)) MiB)"
