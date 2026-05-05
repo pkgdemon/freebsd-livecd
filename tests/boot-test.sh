@@ -68,17 +68,21 @@ eval spawn qemu-system-x86_64 \
     -display none -serial stdio \
     -no-reboot
 
-# Single test: wait for "Starting local daemons:" on the serial console.
-# This marker is emitted by FreeBSD's /etc/rc near the end of multi-user
-# rc.d execution -- by the time it appears, every prior stage of the boot
-# (loader, kernel, init.sh, gunion overlay, init_chroot pivot, multi-user
-# /etc/rc) has already succeeded.
+# Single test: wait for the getty "login:" prompt on the serial console.
+# This is the strongest boot-success marker FreeBSD emits -- by the time
+# getty prints "login:", every prior stage has succeeded: loader, kernel,
+# cd9660 mount, init.sh, gunion overlay, init_chroot pivot, all of /etc/rc,
+# all rc.d services, and getty has come up and is accepting users.
+#
+# (Earlier we tried "Starting local daemons:" but that banner only prints
+# if /etc/rc.local exists; we removed rc.local for a clean live-system
+# experience, so the banner is gone too.)
 expect {
     timeout {
-        puts "\nFAIL: 'Starting local daemons:' not seen within 8 minutes"
+        puts "\nFAIL: 'login:' prompt not seen within 8 minutes"
         exit 1
     }
-    "Starting local daemons:" { puts "\nOK: boot reached multi-user" }
+    "login:" { puts "\nOK: boot reached the login prompt" }
 }
 
 close
